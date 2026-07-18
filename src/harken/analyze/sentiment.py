@@ -1,10 +1,11 @@
 """Lexicon-based sentiment analysis — no API key, no model download, no network.
 
 This is intentionally simple and transparent: a curated valence lexicon plus
-negation and intensifier handling, scored VADER-style and normalised to roughly
-[-1, 1]. It will never beat an LLM, but it runs instantly on a clean clone and
-makes the zero-config demo honest. Plug an LLM analyzer in front of it for
-better results (see :mod:`harken.analyze.pipeline_analyzer`).
+negation, intensifier, and contrastive-conjunction handling, scored VADER-style
+and normalised to roughly [-1, 1]. It will never beat an LLM, but it runs
+instantly on a clean clone and makes the zero-config demo honest. Swap in a
+different analyzer for better results by implementing the same ``score()``
+interface (see :class:`LexiconSentiment`).
 """
 
 from __future__ import annotations
@@ -45,8 +46,38 @@ _LEXICON: dict[str, float] = {
     "bloated": -2, "expensive": -1.5, "overpriced": -2, "scam": -3, "spam": -2,
     "lacking": -1.5, "missing": -1, "unreliable": -2.5, "insecure": -2,
     "vulnerable": -1.5, "regret": -2.5, "meh": -1, "disaster": -3, "nightmare": -3,
-    "concerned": -1.5, "concern": -1.5, "worried": -1.5, "ugly": -2,
+    "concerned": -1.5, "concern": -1.5, "worried": -1.5, "ugly": -2, "worse": -2,
+    # churn / brand-monitoring signals: unresponsive support, outages, price hikes
+    "outage": -2, "outages": -2, "downtime": -2, "unresponsive": -2.5,
+    "ghosted": -2.5, "churn": -1.5, "churned": -2, "overhyped": -2,
+    "hike": -1.5, "hiked": -1.5,
 }
+
+# Fixed idioms whose sentiment doesn't decompose into single tokens (checked as
+# lowercase substrings against the raw text). Kept short and unambiguous.
+_NEGATIVE_PHRASES: dict[str, float] = {
+    "no notice": -2.0,
+    "never replied": -2.0,
+    "never responded": -2.0,
+    "no response": -1.5,
+    "switched off": -1.5,
+    "went silent": -2.0,
+    "radio silence": -2.0,
+}
+
+# Typographic quote variants that should read as the plain ASCII apostrophe —
+# otherwise "don't" (curly ’) fails to tokenize as a single word, "don" isn't a
+# recognised negator, and the negation is silently dropped.
+_QUOTE_NORMALIZE = str.maketrans({
+    "’": "'",  # RIGHT SINGLE QUOTATION MARK (’)
+    "‘": "'",  # LEFT SINGLE QUOTATION MARK (‘)
+    "ʼ": "'",  # MODIFIER LETTER APOSTROPHE (ʼ)
+})
+
+# Contrastive-conjunction weighting: sentiment before "but" matters less than
+# what follows it ("fine but overhyped" should read negative, not positive).
+_CONTRAST_PRE = 0.5
+_CONTRAST_POST = 1.5
 
 _INTENSIFIERS: dict[str, float] = {
     "very": 1.4, "really": 1.4, "absolutely": 1.6, "extremely": 1.7, "so": 1.3,
@@ -87,7 +118,9 @@ class LexiconSentiment:
         if not text or not text.strip():
             return SentimentResult(Sentiment.NEUTRAL, 0.0)
 
+        text = text.translate(_QUOTE_NORMALIZE)
         tokens = _TOKEN_RE.findall(text.lower())
+        but_idx = tokens.index("but") if "but" in tokens else None
         total = 0.0
         hits = 0
         for i, tok in enumerate(tokens):
@@ -108,7 +141,16 @@ class LexiconSentiment:
             v = val * mult
             if negated:
                 v = -v * 0.85  # negation flips and slightly dampens
+            if but_idx is not None:
+                v *= _CONTRAST_PRE if i < but_idx else _CONTRAST_POST
             total += v
+
+        # fixed idioms that don't decompose into single lexicon tokens
+        lowered = text.lower()
+        for phrase, val in _NEGATIVE_PHRASES.items():
+            if phrase in lowered:
+                total += val
+                hits += 1
 
         # emoji contribute directly
         for ch in text:

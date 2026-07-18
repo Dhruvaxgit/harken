@@ -60,3 +60,17 @@ def test_ignores_stopwords_and_query_term():
     for t in themes:
         assert "the" not in t.terms
         assert "acme" not in t.terms  # the tracked term itself is not a theme
+
+
+def test_theme_labels_are_deterministic_regardless_of_hash_seed():
+    # Regression test for tie-breaking that used to depend on `set` iteration
+    # order, which PYTHONHASHSEED randomises per-process. Asserting the exact
+    # label (rather than just self-consistency) means a regression is likely
+    # to flake under CI's randomised hash seed rather than pass silently.
+    # Spot-check directly with e.g. `PYTHONHASHSEED=1 pytest tests/test_insights.py`.
+    mentions = [
+        m("sync and price are both bad"),
+        m("sync and price are both annoying"),
+    ]
+    themes = ThemeExtractor().extract(mentions)
+    assert themes[0].label == "both / price"

@@ -73,7 +73,7 @@ def create_app(db_path: str = "harken.db") -> FastAPI:
         q: str | None = None,
         source: str | None = None,
         sentiment: str | None = None,
-        limit: int = Query(200, le=1000),
+        limit: int = Query(200, ge=1, le=1000),
     ):
         db = store()
         try:

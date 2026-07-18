@@ -24,8 +24,6 @@ app = typer.Typer(
 )
 console = Console()
 
-DEMO_DB = "harken-demo.db"
-
 
 def _version(value: bool):
     if value:
@@ -44,6 +42,7 @@ def main(
 def demo(
     serve: bool = typer.Option(True, help="Launch the web dashboard after loading."),
     port: int = typer.Option(8042, help="Port for the dashboard."),
+    db: str = typer.Option(None, help="Database path (default: harken.db, or $HARKEN_DB)."),
 ):
     """Load a bundled sample dataset and show the full pipeline — zero config, no keys."""
     console.print(Panel.fit(
@@ -51,7 +50,8 @@ def demo(
         "and running the real pipeline: aggregate → sentiment → themes.",
         border_style="cyan",
     ))
-    store = Store(DEMO_DB)
+    db_path = db or Config().db_path
+    store = Store(db_path)
     mentions = sample_mentions()
     sentiment = LexiconSentiment()
     for m in mentions:
@@ -66,7 +66,7 @@ def demo(
 
     if serve:
         console.print(f"\n[bold cyan]Dashboard →[/bold cyan] http://localhost:{port}\n")
-        _serve(DEMO_DB, port)
+        _serve(db_path, port)
 
 
 @app.command()
@@ -87,43 +87,52 @@ def track(
 
     console.print(f"Listening for [bold]“{query}”[/bold] across: {', '.join(cfg.sources)} …")
     pipe = Pipeline(cfg)
-    result = pipe.track(query)
+    try:
+        result = pipe.track(query)
 
-    for src, err in result.errors.items():
-        console.print(f"  [yellow]![/yellow] {src}: {err}")
-    console.print(
-        f"[green]✓[/green] {result.fetched} fetched · [bold]{result.new}[/bold] new · "
-        f"{sum(result.by_source.values())} matched"
-    )
-    _print_report(pipe.store, query)
-    pipe.close()
+        for src, err in result.errors.items():
+            console.print(f"  [yellow]![/yellow] {src}: {err}")
+        console.print(
+            f"[green]✓[/green] {result.fetched} fetched · [bold]{result.new}[/bold] new · "
+            f"{sum(result.by_source.values())} matched"
+        )
+        _print_report(pipe.store, query)
+    finally:
+        pipe.close()
     console.print(f"\nView the dashboard: [cyan]harken serve --db {cfg.db_path}[/cyan]")
+
+    if cfg.sources and len(result.errors) == len(cfg.sources):
+        raise typer.Exit(1)  # every configured source failed — nothing was fetched
 
 
 @app.command()
 def report(
     query: str = typer.Argument(None, help="Keyword to report on (default: most recent)."),
-    db: str = typer.Option("harken.db", help="Database path."),
+    db: str = typer.Option(None, help="Database path (default: harken.db, or $HARKEN_DB)."),
 ):
     """Print a sentiment + theme report for a tracked keyword."""
-    store = Store(db)
-    q = query or (store.queries()[0] if store.queries() else None)
-    if not q:
-        console.print("[yellow]No data yet. Run `harken track \"keyword\"` or `harken demo`.[/yellow]")
-        raise typer.Exit(1)
-    _print_report(store, q)
-    store.close()
+    store = Store(db or Config().db_path)
+    try:
+        q = query or (store.queries()[0] if store.queries() else None)
+        if not q:
+            console.print(
+                "[yellow]No data yet. Run `harken track \"keyword\"` or `harken demo`.[/yellow]"
+            )
+            raise typer.Exit(1)
+        _print_report(store, q)
+    finally:
+        store.close()
 
 
 @app.command()
 def serve(
-    db: str = typer.Option("harken.db", help="Database path."),
+    db: str = typer.Option(None, help="Database path (default: harken.db, or $HARKEN_DB)."),
     port: int = typer.Option(8042, help="Port."),
     host: str = typer.Option("127.0.0.1", help="Bind host."),
 ):
     """Launch the local web dashboard."""
     console.print(f"[bold cyan]Harken dashboard →[/bold cyan] http://{host}:{port}")
-    _serve(db, port, host)
+    _serve(db or Config().db_path, port, host)
 
 
 @app.command()
@@ -165,6 +174,7 @@ def _print_report(store: Store, query: str):
 
     mentions = store.mentions(query=query, limit=10_000)
     themes = ThemeExtractor().extract(mentions)
+    store.upsert(mentions)  # persist theme labels so the dashboard sees the same themes
     if themes:
         tt = Table(title="Top themes", show_header=True, box=None)
         tt.add_column("theme", style="yellow")

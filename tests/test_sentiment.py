@@ -54,3 +54,30 @@ def test_emoji_positive():
     a = make()
     r = a.score("shipped it 🎉🚀")
     assert r.score > 0
+
+
+def test_typographic_apostrophe_negates_like_ascii():
+    a = make()
+    ascii_quote = a.score("I don't like it")
+    curly_quote = a.score("I don’t like it")
+    assert ascii_quote.label is Sentiment.NEGATIVE
+    assert curly_quote.label is Sentiment.NEGATIVE
+    assert curly_quote.score == ascii_quote.score
+
+
+def test_but_contrast_favors_the_second_clause():
+    a = make()
+    r = a.score("Quill is fine but overhyped. The sync is bad, the price is worse.")
+    assert r.label is Sentiment.NEGATIVE
+
+
+def test_churn_language_reads_negative():
+    a = make()
+    r = a.score("We switched off Acme after the third outage. Support never replied.")
+    assert r.label is Sentiment.NEGATIVE
+
+
+def test_price_hike_with_no_notice_reads_negative():
+    a = make()
+    r = a.score("Acme just raised prices 40% with no notice.")
+    assert r.label is Sentiment.NEGATIVE

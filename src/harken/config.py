@@ -5,6 +5,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from dotenv import find_dotenv, load_dotenv
+
+# usecwd=True: look for .env in the directory harken is *run* from, not the
+# installed package's location (find_dotenv defaults to searching upward from
+# this source file, which is wrong once harken is pip-installed).
+load_dotenv(find_dotenv(usecwd=True))
+
 
 def _env_list(name: str) -> list[str]:
     raw = os.getenv(name, "")

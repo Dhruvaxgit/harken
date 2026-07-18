@@ -71,13 +71,17 @@ class ThemeExtractor:
             for w in _TOKEN_RE.findall(mn.query.lower()):
                 extra_stop.add(w)
 
-        # document frequency of each term
+        # document frequency of each term. Insert in sorted order so that
+        # Counter's tie-breaking (which follows dict insertion order) is
+        # deterministic across processes — plain `set` iteration order is
+        # randomised per-process by PYTHONHASHSEED and would otherwise make
+        # theme labels flip between runs on identical data.
         df: Counter[str] = Counter()
         per_mention: dict[str, set[str]] = {}
         for mn in mentions:
             toks = set(_tokens(mn.content, extra_stop))
             per_mention[mn.id] = toks
-            df.update(toks)
+            df.update(sorted(toks))
 
         # candidate theme seeds = most common meaningful terms (df >= 2 if we can)
         common = [t for t, c in df.most_common() if c >= 2]
@@ -99,7 +103,7 @@ class ThemeExtractor:
             # enrich the label with the next most co-occurring term
             co: Counter[str] = Counter()
             for mn in members:
-                co.update(per_mention[mn.id])
+                co.update(sorted(per_mention[mn.id]))
             co.pop(seed, None)
             terms = [seed] + [t for t, _ in co.most_common(2)]
             label = " / ".join(terms[:2]) if len(terms) > 1 else seed
