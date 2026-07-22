@@ -582,3 +582,91 @@ def test_dashboard_scan_api_rejects_unknown_source(tmp_path):
     )
     assert response.status_code == 422
     assert "Unknown source" in response.json()["detail"]
+
+
+def test_oversized_project_id_is_rejected_not_500(tmp_path):
+    # A project id past SQLite's INTEGER range must be a clean 422, never a 500.
+    client = TestClient(create_app(seeded_db(tmp_path)))
+    huge = "9" * 26
+    for path in (f"/?p={huge}", f"/api/summary?p={huge}", f"/api/mentions?p={huge}"):
+        assert client.get(path).status_code == 422, path
+    assert client.get("/?p=0").status_code == 422
+
+
+def test_login_rejects_non_ascii_csrf_without_500(tmp_path):
+    db_path = str(tmp_path / "nonascii.db")
+    cfg = Config(db_path=db_path, auth_mode="accounts")
+    client = TestClient(create_app(db_path, config=cfg), follow_redirects=False)
+    response = client.post(
+        "/login",
+        content=b"csrf=%C3%A9&username=x&password=y",
+        headers={"content-type": "application/x-www-form-urlencoded"},
+    )
+    assert response.status_code == 403
+
+
+def test_oversized_project_id_on_mutations_is_rejected_not_500(tmp_path):
+    client = TestClient(create_app(seeded_db(tmp_path)))
+    token = re.search(r'data-csrf="([^"]+)"', client.get("/").text).group(1)
+    huge = "9" * 26
+    assert (
+        client.request("DELETE", f"/api/projects/{huge}", headers={"X-Harken-CSRF": token}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            f"/api/projects/{huge}/queries",
+            json={"query": "acme"},
+            headers={"X-Harken-CSRF": token},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/track",
+            json={"query": "acme", "sources": ["hackernews"], "project_id": int(huge)},
+            headers={"X-Harken-CSRF": token},
+        ).status_code
+        == 422
+    )
+
+
+def test_chart_series_tolerates_null_sentiment_days(tmp_path):
+    # A day whose mentions all have NULL sentiment makes the SUM() columns NULL;
+    # the chart must render it as zeros, not crash with int(None).
+    db_path = str(tmp_path / "nullsent.db")
+    with Store(db_path) as store:
+        store.upsert(
+            [
+                Mention(
+                    source="hackernews",
+                    query="acme",
+                    text="no sentiment yet",
+                    url="n1",
+                    created_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                    sentiment=None,
+                )
+            ]
+        )
+    client = TestClient(create_app(db_path))
+    assert client.get("/?q=acme").status_code == 200
+    assert client.get("/api/summary?q=acme").status_code == 200
+
+
+def test_login_rejects_cross_origin_post(tmp_path):
+    db_path = str(tmp_path / "xorigin.db")
+    with Store(db_path) as store:
+        store.create_user(
+            "admin", hash_password("admin password 123", iterations=100_000), "admin"
+        )
+    cfg = Config(db_path=db_path, auth_mode="accounts")
+    client = TestClient(create_app(db_path, config=cfg), follow_redirects=False)
+    csrf = re.search(r'name="csrf" value="([^"]+)"', client.get("/login").text).group(1)
+    # Even with a valid token, a cross-site Origin must be refused (login CSRF).
+    response = client.post(
+        "/login",
+        data={"username": "admin", "password": "admin password 123", "csrf": csrf},
+        headers={"origin": "https://evil.example"},
+    )
+    assert response.status_code == 403
+    assert "harken_session" not in client.cookies

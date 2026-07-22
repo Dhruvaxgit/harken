@@ -37,7 +37,11 @@ class HackerNewsSource(Source):
         }
         boundaries = []
         if cursor:
-            boundaries.append(f"created_at_i<{int(cursor)}")
+            # Inclusive (<=) so items sharing the previous page's oldest second
+            # are not skipped when the page cap splits that group; the store
+            # de-duplicates the one-second overlap and the pipeline's bounded
+            # page loop stops the (pathological) all-same-second case.
+            boundaries.append(f"created_at_i<={int(cursor)}")
         if since:
             boundaries.append(f"created_at_i>{int(since.timestamp())}")
         if boundaries:

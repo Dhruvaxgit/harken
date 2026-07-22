@@ -437,3 +437,33 @@ def test_watch_can_run_a_bounded_scan(tmp_path):
     assert result.exit_code == 0, result.output
     assert route.call_count == 1
     assert "scan 1" in result.output
+
+
+def test_watch_survives_a_failing_scan(tmp_path, monkeypatch):
+    # A store error inside a scan must be logged and the watcher must keep
+    # going / exit cleanly on the run cap, not crash the long-running process.
+    class BoomPipe:
+        def __init__(self, cfg):
+            pass
+
+        def track(self, query, pages=3):
+            raise RuntimeError("database is locked")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cli, "Pipeline", BoomPipe)
+    result = runner.invoke(
+        cli.app,
+        ["watch", "acme", "--sources", "hackernews", "--runs", "1", "--db", str(tmp_path / "w.db")],
+    )
+    assert result.exit_code == 0, result.output
+    assert "failed" in result.output
+
+
+def test_export_to_a_directory_exits_cleanly(tmp_path):
+    db = str(tmp_path / "e.db")
+    assert runner.invoke(cli.app, ["demo", "--no-serve", "--db", db]).exit_code == 0
+    result = runner.invoke(cli.app, ["export", "--db", db, "-o", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output

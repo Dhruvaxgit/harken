@@ -18,8 +18,21 @@ def _env_list(name: str) -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
-def _positive_env_int(name: str, default: int) -> int:
+def _clean_env(name: str) -> str | None:
+    """Return the env var's stripped value, or None if it is unset or blank.
+
+    A set-but-empty var (``HARKEN_X=``) is treated as unset so it falls back to
+    the documented default instead of crashing ``int('')`` / choice validation.
+    """
     raw = os.getenv(name)
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return stripped or None
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    raw = _clean_env(name)
     try:
         value = int(raw) if raw is not None else default
     except ValueError as exc:
@@ -30,7 +43,7 @@ def _positive_env_int(name: str, default: int) -> int:
 
 
 def _nonnegative_env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
+    raw = _clean_env(name)
     try:
         value = int(raw) if raw is not None else default
     except ValueError as exc:
@@ -41,7 +54,7 @@ def _nonnegative_env_int(name: str, default: int) -> int:
 
 
 def _positive_env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
+    raw = _clean_env(name)
     try:
         value = float(raw) if raw is not None else default
     except ValueError as exc:
@@ -52,7 +65,7 @@ def _positive_env_float(name: str, default: float) -> float:
 
 
 def _nonnegative_env_float(name: str, default: float) -> float:
-    raw = os.getenv(name)
+    raw = _clean_env(name)
     try:
         value = float(raw) if raw is not None else default
     except ValueError as exc:
@@ -63,7 +76,7 @@ def _nonnegative_env_float(name: str, default: float) -> float:
 
 
 def _choice_env(name: str, default: str, choices: set[str]) -> str:
-    value = os.getenv(name, default).strip().lower()
+    value = (_clean_env(name) or default).lower()
     if value not in choices:
         expected = ", ".join(sorted(choices))
         raise ValueError(f"{name} must be one of {expected} (got {value!r})")
@@ -71,10 +84,10 @@ def _choice_env(name: str, default: str, choices: set[str]) -> str:
 
 
 def _bool_env(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
+    raw = _clean_env(name)
     if raw is None:
         return default
-    value = raw.strip().lower()
+    value = raw.lower()
     if value in {"1", "true", "yes", "on"}:
         return True
     if value in {"0", "false", "no", "off"}:
@@ -83,7 +96,7 @@ def _bool_env(name: str, default: bool = False) -> bool:
 
 
 def _auth_mode_env() -> str:
-    explicit = os.getenv("HARKEN_AUTH_MODE")
+    explicit = _clean_env("HARKEN_AUTH_MODE")
     if explicit is not None:
         return _choice_env("HARKEN_AUTH_MODE", "none", {"accounts", "basic", "none"})
     if os.getenv("HARKEN_AUTH_USERNAME") and os.getenv("HARKEN_AUTH_PASSWORD"):
@@ -92,7 +105,7 @@ def _auth_mode_env() -> str:
 
 
 def _log_level_env() -> str:
-    value = os.getenv("HARKEN_LOG_LEVEL", "INFO").strip().upper()
+    value = (_clean_env("HARKEN_LOG_LEVEL") or "INFO").upper()
     if value == "WARN":
         value = "WARNING"
     choices = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}

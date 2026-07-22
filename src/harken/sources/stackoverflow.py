@@ -88,7 +88,11 @@ class StackOverflowSource(Source):
             for item in data.get("items", [])
             if item.get("creation_date") is not None
         ]
-        next_cursor = str(min(timestamps) - 1) if data.get("has_more") and timestamps else None
+        # `todate` is inclusive; cursor at the page's oldest second (not min-1)
+        # re-includes questions that share that second but overflowed the page
+        # cap. The store de-duplicates the overlap; the pipeline's bounded page
+        # loop prevents a stall when a whole page shares one second.
+        next_cursor = str(min(timestamps)) if data.get("has_more") and timestamps else None
         return FetchPage(mentions, next_cursor)
 
 

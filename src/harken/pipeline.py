@@ -187,7 +187,9 @@ class Pipeline:
             }.values()
         )
         result.fetched = len(collected)
-        result.new = self.store.upsert(collected)
+        # Pre-cluster ingest: these mentions carry no theme yet, so preserve any
+        # existing labels here; themes are (re)clustered and written below.
+        result.new = self.store.upsert(collected, update_theme=False)
         for name, (mentions, next_cursor, incremental_since) in successful.items():
             self.store.record_source_success(
                 query,

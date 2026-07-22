@@ -59,7 +59,10 @@ class XSource(Source):
             if user.get("id") is not None
         }
         mentions: list[Mention] = []
-        for post in data.get("data", [])[:limit]:
+        # Process every returned tweet: X enforces a 10-row minimum, and
+        # `next_token` advances past all of them, so trimming to a smaller
+        # `limit` here would silently drop the surplus rows on every page.
+        for post in data.get("data", []):
             post_id = post.get("id")
             if not post_id:
                 continue

@@ -63,7 +63,9 @@ def test_hackernews_page_uses_stable_time_boundaries():
     since = datetime(2023, 1, 1, tzinfo=timezone.utc)
     page = HackerNewsSource().fetch_page("acme", limit=1, cursor="1700000100", since=since)
     params = route.calls[0].request.url.params
-    assert "created_at_i<1700000100" in params["numericFilters"]
+    # Inclusive lower bound so items sharing the boundary second are not skipped
+    # when a page cap splits that group (store dedup absorbs the overlap).
+    assert "created_at_i<=1700000100" in params["numericFilters"]
     assert f"created_at_i>{int(since.timestamp())}" in params["numericFilters"]
     assert page.next_cursor == "1700000000"
     assert params["typoTolerance"] == "false"

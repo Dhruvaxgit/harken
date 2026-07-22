@@ -163,6 +163,11 @@ CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
 """
 
+# Bumped when the on-disk schema or a one-time reconciliation step changes.
+# Stored in `PRAGMA user_version` so _ensure_schema() can skip the expensive
+# whole-table reconciliation on every connection once a DB is up to date.
+_SCHEMA_VERSION = 2
+
 
 class Store:
     def __init__(self, path: str | Path = "harken.db"):
@@ -181,6 +186,11 @@ class Store:
 
     def _ensure_schema(self) -> None:
         with closing(self._conn.cursor()) as cur:
+            cur.execute("PRAGMA user_version")
+            if cur.fetchone()[0] >= _SCHEMA_VERSION:
+                # Already reconciled; skip the whole-table GROUP BY scan that
+                # would otherwise run on every connection (once per web request).
+                return
             cur.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'")
             had_project_schema = cur.fetchone() is not None
             cur.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mentions'")
@@ -195,6 +205,7 @@ class Store:
                     + _PROJECT_SCHEMA
                     + _AUTH_SCHEMA
                 )
+                cur.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
                 return
 
             cur.execute("PRAGMA table_info(mentions)")
@@ -244,6 +255,7 @@ class Store:
                     """,
                     (DEFAULT_PROJECT_ID,),
                 )
+            cur.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     def close(self) -> None:
         self._conn.close()
@@ -519,8 +531,15 @@ class Store:
             raise ValueError("cannot remove or demote the last active admin")
 
     # -- writes --------------------------------------------------------------
-    def upsert(self, mentions: list[Mention]) -> int:
-        """Insert or replace mentions. Returns count of *new* rows."""
+    def upsert(self, mentions: list[Mention], *, update_theme: bool = True) -> int:
+        """Insert or replace mentions. Returns count of *new* rows.
+
+        ``update_theme=False`` leaves an existing row's ``theme`` untouched. Use
+        it for the pre-cluster ingest of freshly fetched mentions (which carry no
+        theme), so re-ingesting cannot transiently null an already-computed
+        label. The post-cluster write uses the default so it can both set and
+        *clear* labels (a mention that falls out of every cluster becomes NULL).
+        """
         now = datetime.now(timezone.utc).isoformat()
         new = 0
         with closing(self._conn.cursor()) as cur:
@@ -546,28 +565,32 @@ class Store:
                         """,
                         (DEFAULT_PROJECT_ID, query, now),
                     )
+            # When update_theme is False the theme column is left out of the
+            # UPDATE, preserving the stored label; otherwise it is set from the
+            # incoming value (which may be NULL to clear a de-clustered label).
+            theme_update = "theme=excluded.theme,\n                        " if update_theme else ""
+            upsert_sql = f"""
+                INSERT INTO mentions
+                    (id, source, query, author, title, text, url, created_at,
+                     score, sentiment, sentiment_score, theme, fetched_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(id, query) DO UPDATE SET
+                    source=excluded.source,
+                    author=excluded.author,
+                    title=excluded.title,
+                    text=excluded.text,
+                    url=excluded.url,
+                    created_at=excluded.created_at,
+                    sentiment=excluded.sentiment,
+                    sentiment_score=excluded.sentiment_score,
+                    {theme_update}score=excluded.score,
+                    fetched_at=excluded.fetched_at
+            """
             for m in mentions:
                 cur.execute("SELECT 1 FROM mentions WHERE id = ? AND query = ?", (m.id, m.query))
                 existed = cur.fetchone() is not None
                 cur.execute(
-                    """
-                    INSERT INTO mentions
-                        (id, source, query, author, title, text, url, created_at,
-                         score, sentiment, sentiment_score, theme, fetched_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(id, query) DO UPDATE SET
-                        source=excluded.source,
-                        author=excluded.author,
-                        title=excluded.title,
-                        text=excluded.text,
-                        url=excluded.url,
-                        created_at=excluded.created_at,
-                        sentiment=excluded.sentiment,
-                        sentiment_score=excluded.sentiment_score,
-                        theme=excluded.theme,
-                        score=excluded.score,
-                        fetched_at=excluded.fetched_at
-                    """,
+                    upsert_sql,
                     (
                         m.id,
                         m.source,
@@ -1333,9 +1356,9 @@ class Store:
             cur.execute(
                 f"""
                 SELECT substr(created_at, 1, 10) AS date,
-                       SUM(sentiment = 'positive') AS positive,
-                       SUM(sentiment = 'negative') AS negative,
-                       SUM(sentiment = 'neutral' OR sentiment IS NULL) AS neutral,
+                       COALESCE(SUM(sentiment = 'positive'), 0) AS positive,
+                       COALESCE(SUM(sentiment = 'negative'), 0) AS negative,
+                       COALESCE(SUM(sentiment = 'neutral' OR sentiment IS NULL), 0) AS neutral,
                        COUNT(*) AS total
                 FROM mentions{where}
                 GROUP BY date

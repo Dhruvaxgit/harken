@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi import Path as PathParam
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -36,6 +37,10 @@ from harken.store import Store
 
 _HERE = Path(__file__).parent
 _SESSION_COOKIE = "harken_session"
+# Largest value SQLite binds as an INTEGER; anything larger overflows the bind
+# and raises, so reject oversized ids at the query-param boundary (422) rather
+# than let them reach the store and surface as an unhandled 500.
+_MAX_ID = 2**63 - 1
 
 # Per-source display metadata: a short glyph badge + accent colour, kept offline
 # (no icon fonts / CDNs). Matches the product's "no telemetry" premise.
@@ -121,7 +126,7 @@ def _chart_series(rows: list[dict], max_points: int = 48, max_ticks: int = 5) ->
     for row_date, row in dated_rows:
         point = points[(row_date - first).days // bucket_days]
         for key in ("positive", "neutral", "negative", "total"):
-            point[key] += int(row.get(key, 0))
+            point[key] += int(row.get(key) or 0)
 
     visible_tick_count = min(max_ticks, point_count)
     if visible_tick_count == 1:
@@ -163,7 +168,7 @@ class ScanRequest(BaseModel):
     sources: list[str] = Field(min_length=1, max_length=20)
     mode: str = "incremental"
     pages: int = Field(default=3, ge=1, le=20)
-    project_id: int | None = Field(default=None, ge=1)
+    project_id: int | None = Field(default=None, ge=1, le=_MAX_ID)
 
 
 class ProjectRequest(BaseModel):
@@ -200,9 +205,14 @@ def create_app(
     def store() -> Store:
         return Store(db_path)
 
+    def _csrf_valid(supplied: str) -> bool:
+        # Compare as bytes so a non-ASCII submission returns False instead of
+        # raising TypeError (secrets.compare_digest rejects non-ASCII str),
+        # which would otherwise surface as an unhandled HTTP 500.
+        return secrets.compare_digest(supplied.encode("utf-8"), csrf_token.encode("utf-8"))
+
     def require_csrf(request: Request) -> None:
-        supplied_token = request.headers.get("x-harken-csrf", "")
-        if not secrets.compare_digest(supplied_token, csrf_token):
+        if not _csrf_valid(request.headers.get("x-harken-csrf", "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
     def require_operator(request: Request) -> None:
@@ -280,7 +290,13 @@ def create_app(
         username = (form.get("username") or [""])[0].strip()
         password = (form.get("password") or [""])[0]
         supplied_csrf = (form.get("csrf") or [""])[0]
-        if not secrets.compare_digest(supplied_csrf, csrf_token):
+        # The CSRF token is served on the public /login page, so it cannot by
+        # itself stop a cross-site login POST (login CSRF / session fixation).
+        # An Origin/Referer check that does not depend on token secrecy closes
+        # that gap; the token check still guards same-origin form integrity.
+        if not _same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+        if not _csrf_valid(supplied_csrf):
             raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
         client_host = request.client.host if request.client else "unknown"
@@ -338,12 +354,17 @@ def create_app(
             db.close()
 
         response = RedirectResponse("/", status_code=303)
+        # Mark the cookie Secure whenever the request is actually served over
+        # HTTPS (directly or via a TLS-terminating proxy), so the token is not
+        # exposed on the wire even if the operator forgets HARKEN_SESSION_SECURE.
+        # The config flag stays an explicit override; the default stays off so a
+        # plain-HTTP localhost deployment still receives a usable cookie.
         response.set_cookie(
             _SESSION_COOKIE,
             token,
             max_age=runtime_config.session_hours * 3600,
             httponly=True,
-            secure=runtime_config.session_secure,
+            secure=runtime_config.session_secure or _is_https(request),
             samesite="strict",
             path="/",
         )
@@ -356,7 +377,9 @@ def create_app(
         raw_body = await request.body()
         form = parse_qs(raw_body.decode("utf-8", errors="replace"), keep_blank_values=True)
         supplied_csrf = (form.get("csrf") or [""])[0]
-        if not secrets.compare_digest(supplied_csrf, csrf_token):
+        if not _same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-origin request rejected")
+        if not _csrf_valid(supplied_csrf):
             raise HTTPException(status_code=403, detail="Invalid CSRF token")
         raw_token = request.cookies.get(_SESSION_COOKIE, "")
         if raw_token:
@@ -468,7 +491,11 @@ def create_app(
         return "\n".join(lines) + "\n"
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request, q: str | None = None, p: int | None = None):
+    def dashboard(
+        request: Request,
+        q: str | None = None,
+        p: int | None = Query(default=None, ge=1, le=_MAX_ID),
+    ):
         db = store()
         try:
             projects = db.projects()
@@ -550,7 +577,7 @@ def create_app(
     @app.get("/api/mentions")
     def api_mentions(
         q: str | None = None,
-        p: int | None = Query(default=None, ge=1),
+        p: int | None = Query(default=None, ge=1, le=_MAX_ID),
         source: str | None = None,
         sentiment: Sentiment | None = None,
         limit: int = Query(200, ge=1, le=1000),
@@ -573,7 +600,7 @@ def create_app(
             db.close()
 
     @app.get("/api/summary")
-    def api_summary(q: str | None = None, p: int | None = Query(default=None, ge=1)):
+    def api_summary(q: str | None = None, p: int | None = Query(default=None, ge=1, le=_MAX_ID)):
         db = store()
         try:
             if q and p is not None:
@@ -661,7 +688,11 @@ def create_app(
             db.close()
 
     @app.post("/api/projects/{project_id}/queries")
-    def api_add_project_query(project_id: int, payload: ProjectQueryRequest, request: Request):
+    def api_add_project_query(
+        payload: ProjectQueryRequest,
+        request: Request,
+        project_id: int = PathParam(ge=1, le=_MAX_ID),
+    ):
         require_operator(request)
         require_csrf(request)
         db = store()
@@ -675,7 +706,11 @@ def create_app(
             db.close()
 
     @app.delete("/api/projects/{project_id}/queries")
-    def api_remove_project_query(project_id: int, payload: ProjectQueryRequest, request: Request):
+    def api_remove_project_query(
+        payload: ProjectQueryRequest,
+        request: Request,
+        project_id: int = PathParam(ge=1, le=_MAX_ID),
+    ):
         require_operator(request)
         require_csrf(request)
         db = store()
@@ -691,7 +726,7 @@ def create_app(
             db.close()
 
     @app.delete("/api/projects/{project_id}")
-    def api_delete_project(project_id: int, request: Request):
+    def api_delete_project(request: Request, project_id: int = PathParam(ge=1, le=_MAX_ID)):
         require_operator(request)
         require_csrf(request)
         db = store()
@@ -745,6 +780,42 @@ def _source_configured(name: str, config: Config) -> bool:
     return True
 
 
+def _is_https(request: Request) -> bool:
+    """True when the client-facing connection is HTTPS, trusting the standard
+    X-Forwarded-Proto set by a TLS-terminating reverse proxy. Spoofing it can
+    only make a cookie *more* restrictive (Secure), so trusting it is safe."""
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return request.url.scheme == "https" or forwarded == "https"
+
+
+def _same_origin(request: Request) -> bool:
+    """Reject cross-site state-changing POSTs. Absent both Origin and Referer
+    (non-browser clients: the CLI, curl, tests) the request is allowed; a
+    browser always sends Origin on a cross-site POST, so genuine CSRF is
+    caught while same-origin form submissions pass.
+
+    The submitted Origin is matched against both Host and X-Forwarded-Host, so a
+    TLS-terminating reverse proxy that rewrites Host to the internal upstream
+    (but forwards the original as X-Forwarded-Host) does not 403 real logins.
+    Trusting X-Forwarded-Host is safe here: the check only passes when it equals
+    the browser-supplied Origin, which an attacker's cross-site form cannot forge.
+    """
+    source = request.headers.get("origin") or request.headers.get("referer")
+    if not source:
+        return True
+    try:
+        netloc = urlsplit(source).netloc
+    except ValueError:
+        return False
+    if not netloc:
+        return False
+    allowed = {request.headers.get("host")}
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_host:
+        allowed.add(forwarded_host.split(",")[0].strip())
+    return netloc in allowed
+
+
 def _valid_basic_auth(header: str | None, username: str, password: str) -> bool:
     if not header or not header.lower().startswith("basic "):
         return False
@@ -753,9 +824,17 @@ def _valid_basic_auth(header: str | None, username: str, password: str) -> bool:
         supplied_username, supplied_password = decoded.split(":", 1)
     except (ValueError, UnicodeDecodeError):
         return False
-    return secrets.compare_digest(supplied_username, username) and secrets.compare_digest(
-        supplied_password, password
+    # Evaluate both comparisons unconditionally (assign before `and`) so a wrong
+    # username does not skip the password check — that short-circuit would leak,
+    # via response timing, whether the username matched. Compare as bytes to
+    # avoid TypeError on non-ASCII credentials.
+    username_ok = secrets.compare_digest(
+        supplied_username.encode("utf-8"), username.encode("utf-8")
     )
+    password_ok = secrets.compare_digest(
+        supplied_password.encode("utf-8"), password.encode("utf-8")
+    )
+    return username_ok and password_ok
 
 
 def _view(m: Mention) -> dict:

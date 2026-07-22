@@ -116,3 +116,43 @@ def test_explicitly_split_opinions_read_neutral():
 def test_stock_mild_phrases_stay_neutral():
     assert make().score("It works as described.").label is Sentiment.NEUTRAL
     assert make().score("It is fine, nothing special.").label is Sentiment.NEUTRAL
+
+
+def test_variation_selector_emoji_do_not_leak_positive():
+    # ❤️ is U+2764 U+FE0F; the trailing variation selector must not add a
+    # second +2 and must not flip negative/neutral emoji.
+    a = make()
+    assert round(a.score("❤️").score, 4) == round(a.score("👍").score, 4)
+    assert a.score("👎️").label is Sentiment.NEGATIVE  # thumbs-down + VS16
+    assert a.score("writing ✍️ docs").label is Sentiment.NEUTRAL
+    assert a.score("bare selector \ufe0f only").label is Sentiment.NEUTRAL
+
+
+def test_contraction_negators_flip_positive():
+    a = make()
+    for text in (
+        "I won't recommend this",
+        "I wouldn't recommend this",
+        "I couldn't recommend this",
+        "I haven't enjoyed it",
+        "It hasn't improved",
+        "I wont recommend this",
+    ):
+        assert a.score(text).label is Sentiment.NEGATIVE, text
+
+
+def test_negated_negative_phrase_is_not_negative():
+    # "no lack of X" must not read as negative just because "lack of" appears.
+    assert make().score("no lack of features here").label is not Sentiment.NEGATIVE
+
+
+def test_phrase_negation_does_not_cross_clause_boundaries():
+    # A negator in a NEIGHBOURING clause must not cancel a negative idiom —
+    # otherwise genuine churn/silence signals would read neutral.
+    a = make()
+    for text in (
+        "They gave no warning and went silent",
+        "Got no reply, radio silence ever since",
+        "no doubt they went silent for weeks",
+    ):
+        assert a.score(text).label is Sentiment.NEGATIVE, text

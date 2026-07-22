@@ -54,6 +54,26 @@ def test_limit_must_be_positive(monkeypatch):
         config.Config()
 
 
+def test_blank_env_vars_fall_back_to_defaults(monkeypatch):
+    # A set-but-empty var (HARKEN_X=) must be treated as unset, not crash
+    # startup on int('') / choice validation.
+    for name in (
+        "HARKEN_SMTP_PORT",
+        "HARKEN_LIMIT",
+        "HARKEN_LOG_FORMAT",
+        "HARKEN_LOG_LEVEL",
+        "HARKEN_SESSION_SECURE",
+        "HARKEN_AUTH_MODE",
+    ):
+        monkeypatch.setenv(name, "")
+    cfg = config.Config()
+    assert cfg.smtp_port == 587
+    assert cfg.log_format == "console"
+    assert cfg.log_level == "INFO"
+    assert cfg.session_secure is False
+    assert cfg.auth_mode == "none"
+
+
 def test_webhook_url_is_loaded(monkeypatch):
     monkeypatch.setenv("HARKEN_WEBHOOK_URL", "https://alerts.example.test/harken")
     assert config.Config().webhook_url == "https://alerts.example.test/harken"

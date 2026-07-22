@@ -48,8 +48,12 @@ class RedditSource(Source):
         if cursor:
             params["after"] = cursor
         with self._client() as client:
-            token = self.access_token or self._app_token(client)
-            client.headers["Authorization"] = f"Bearer {token}"
+            # Cache the minted app token on the instance so a multi-page
+            # backfill (same source object across pages) does not POST the
+            # rate-limited token endpoint once per page.
+            if not self.access_token:
+                self.access_token = self._app_token(client)
+            client.headers["Authorization"] = f"Bearer {self.access_token}"
             resp = client.get(_API, params=params)
             resp.raise_for_status()
             data = resp.json()

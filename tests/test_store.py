@@ -55,6 +55,29 @@ def test_upsert_refreshes_mutable_source_fields(tmp_path):
     db.close()
 
 
+def test_pre_cluster_upsert_preserves_theme_but_post_cluster_can_clear_it(tmp_path):
+    db = Store(tmp_path / "t.db")
+    themed = mk("fast tool", url="https://x/1")
+    themed.theme = "performance"
+    db.upsert([themed])
+    # Pre-cluster re-ingest (theme unknown) must NOT wipe the stored label.
+    db.upsert([mk("fast tool", url="https://x/1")], update_theme=False)
+    assert db.mentions(query="acme")[0].theme == "performance"
+    # Post-cluster write (default) is authoritative and may clear a de-clustered label.
+    db.upsert([mk("fast tool", url="https://x/1")])
+    assert db.mentions(query="acme")[0].theme is None
+    db.close()
+
+
+def test_timeseries_reports_zero_not_null_for_all_null_sentiment_day(tmp_path):
+    db = Store(tmp_path / "t.db")
+    db.upsert([mk("no sentiment", url="https://x/1")])  # sentiment defaults to None
+    row = db.timeseries(query="acme")[0]
+    assert row["positive"] == 0 and row["negative"] == 0
+    assert row["neutral"] == 1 and row["total"] == 1
+    db.close()
+
+
 def test_same_mention_can_belong_to_multiple_queries(tmp_path):
     db = Store(tmp_path / "t.db")
     assert db.upsert([mk("shared", query="acme", url="https://x/shared")]) == 1

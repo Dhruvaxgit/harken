@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -83,7 +84,7 @@ def demo(
         for m in mentions:
             r = sentiment.score(m.content)
             m.sentiment, m.sentiment_score = r.label, r.score
-        store.upsert(mentions)
+        store.upsert(mentions, update_theme=False)  # pre-cluster; themes written below
         stored = store.mentions(query=DEMO_QUERY, limit=10_000)
         ThemeExtractor().extract(stored)  # tags each mention with its theme, in place
         store.upsert(stored)
@@ -214,20 +215,30 @@ def watch(
     completed = 0
     try:
         while True:
-            result = pipe.track(query, pages=pages)
             completed += 1
-            for src, err in result.errors.items():
-                console.print(f"  [yellow]![/yellow] {src}: {err}")
-            _print_retries(result)
-            if result.analysis_error:
-                console.print(f"  [yellow]![/yellow] optional LLM labels: {result.analysis_error}")
-            if result.sentiment_error:
-                console.print(f"  [yellow]![/yellow] sentiment: {result.sentiment_error}")
-            _print_alert_result(result)
-            console.print(
-                f"[green]✓[/green] scan {completed}: {result.fetched} fetched · "
-                f"[bold]{result.new}[/bold] new"
-            )
+            try:
+                result = pipe.track(query, pages=pages)
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:  # a single scan failing must not kill the watcher
+                console.print(
+                    f"  [red]✗[/red] scan {completed} failed: {type(e).__name__}: {e}"
+                )
+            else:
+                for src, err in result.errors.items():
+                    console.print(f"  [yellow]![/yellow] {src}: {err}")
+                _print_retries(result)
+                if result.analysis_error:
+                    console.print(
+                        f"  [yellow]![/yellow] optional LLM labels: {result.analysis_error}"
+                    )
+                if result.sentiment_error:
+                    console.print(f"  [yellow]![/yellow] sentiment: {result.sentiment_error}")
+                _print_alert_result(result)
+                console.print(
+                    f"[green]✓[/green] scan {completed}: {result.fetched} fetched · "
+                    f"[bold]{result.new}[/bold] new"
+                )
             if runs is not None and completed >= runs:
                 break
             time.sleep(every)
@@ -651,8 +662,12 @@ def export_data(
         typer.echo(content, nl=False)
         return
     target = Path(output).expanduser()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        console.print(f"[red]✗[/red] could not write {target}: {exc}")
+        raise typer.Exit(1) from exc
     console.print(f"[green]✓[/green] exported {len(records)} mentions to {target}")
 
 
@@ -668,6 +683,9 @@ def backup(
             target = store.backup(output, overwrite=force)
         except (FileExistsError, ValueError) as exc:
             raise typer.BadParameter(str(exc), param_hint="output") from exc
+        except (OSError, sqlite3.Error) as exc:
+            console.print(f"[red]✗[/red] backup failed: {exc}")
+            raise typer.Exit(1) from exc
     console.print(f"[green]✓[/green] backup written to {target}")
 
 

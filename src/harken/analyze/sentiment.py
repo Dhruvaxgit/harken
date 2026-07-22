@@ -257,10 +257,43 @@ _NEGATORS = {
     "didnt",
     "didn't",
     "less",
+    # negating contractions — the tokenizer keeps them whole (e.g. "won't"),
+    # so each surface form must be listed; the generic `endswith("n't")` check
+    # in score() is the backstop for any apostrophe form not enumerated here.
+    "wont",
+    "won't",
+    "wouldnt",
+    "wouldn't",
+    "couldnt",
+    "couldn't",
+    "shouldnt",
+    "shouldn't",
+    "arent",
+    "aren't",
+    "werent",
+    "weren't",
+    "havent",
+    "haven't",
+    "hasnt",
+    "hasn't",
+    "hadnt",
+    "hadn't",
+    "aint",
+    "ain't",
 }
 
-_POSITIVE_EMOJI = "🎉🚀😀😃😄😁😊🙂👍❤️💜✨🔥💯🥳😍🤩👏"
-_NEGATIVE_EMOJI = "😞😢😭😠😡👎💩😤🤬😩😖💔🙄😒"
+# Presentation variation selectors (U+FE0E/U+FE0F) are stripped so that a
+# multi-code-point emoji like ❤️ (U+2764 U+FE0F) matches on its base code point
+# exactly once, and a stray selector never scores sentiment on its own.
+_VARIATION_SELECTORS = "\ufe0e\ufe0f"  # U+FE0E VS15, U+FE0F VS16
+
+
+def _emoji_set(chars: str) -> frozenset[str]:
+    return frozenset(ch for ch in chars if ch not in _VARIATION_SELECTORS)
+
+
+_POSITIVE_EMOJI = _emoji_set("🎉🚀😀😃😄😁😊🙂👍❤️💜✨🔥💯🥳😍🤩👏")
+_NEGATIVE_EMOJI = _emoji_set("😞😢😭😠😡👎💩😤🤬😩😖💔🙄😒")
 
 _TOKEN_RE = re.compile(r"[a-zA-Z']+")
 
@@ -301,7 +334,7 @@ class LexiconSentiment:
             mult = 1.0
             negated = False
             for prev in tokens[max(0, i - 3) : i]:
-                if prev in _NEGATORS:
+                if prev in _NEGATORS or prev.endswith("n't"):
                     negated = True
                 if prev in _INTENSIFIERS:
                     mult *= _INTENSIFIERS[prev]
@@ -314,12 +347,25 @@ class LexiconSentiment:
                 v *= _CONTRAST_PRE if i < but_idx else _CONTRAST_POST
             total += v
 
-        # fixed idioms that don't decompose into single lexicon tokens
+        # fixed idioms that don't decompose into single lexicon tokens. A
+        # negator DIRECTLY before the idiom ("no lack of", "never went silent")
+        # inverts its meaning, so the penalty is suppressed. The negator must be
+        # immediately adjacent (only whitespace between): a negator in a
+        # neighbouring clause ("gave no warning and went silent") must not
+        # cancel the idiom, or genuine churn signals would read neutral.
         lowered = text.lower()
         for phrase, val in _PHRASE_VALENCE.items():
-            if phrase in lowered:
-                total += val
-                hits += 1
+            idx = lowered.find(phrase)
+            if idx == -1:
+                continue
+            before = lowered[:idx]
+            preceding = _TOKEN_RE.findall(before)
+            prev = preceding[-1] if preceding else ""
+            adjacent = bool(prev) and before.rstrip().endswith(prev)
+            if adjacent and (prev in _NEGATORS or prev.endswith("n't")):
+                continue
+            total += val
+            hits += 1
 
         # Explicitly distributed opinions describe a mixed population rather
         # than one author's strong stance ("some users like it, others hate it").
