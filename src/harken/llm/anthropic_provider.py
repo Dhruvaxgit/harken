@@ -44,5 +44,9 @@ class AnthropicProvider(LLMProvider):
             max_tokens=max_tokens,
             system=system or "",
             messages=[{"role": "user", "content": prompt}],
+            # Bound the call like the OpenAI (60s) / Ollama (120s) providers so a
+            # stalled connection degrades to the lexicon quickly instead of
+            # hanging a track run on the SDK's ~10-minute default.
+            timeout=60.0,
         )
         return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text").strip()

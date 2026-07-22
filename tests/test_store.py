@@ -1,6 +1,9 @@
 """SQLite store tests — temp DB, no network."""
 
-from datetime import datetime, timezone
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from harken.models import Mention, Sentiment
 from harken.store import Store
@@ -37,12 +40,61 @@ def test_upsert_updates_sentiment(tmp_path):
     db.close()
 
 
+def test_upsert_refreshes_mutable_source_fields(tmp_path):
+    db = Store(tmp_path / "t.db")
+    first = mk("old text", url="https://x/1")
+    db.upsert([first])
+    refreshed = mk("edited text", url="https://x/1")
+    refreshed.score = 42
+    refreshed.created_at += timedelta(days=1)
+    db.upsert([refreshed])
+    got = db.mentions(query="acme")[0]
+    assert got.text == "edited text"
+    assert got.score == 42
+    assert got.created_at == refreshed.created_at
+    db.close()
+
+
+def test_pre_cluster_upsert_preserves_theme_but_post_cluster_can_clear_it(tmp_path):
+    db = Store(tmp_path / "t.db")
+    themed = mk("fast tool", url="https://x/1")
+    themed.theme = "performance"
+    db.upsert([themed])
+    # Pre-cluster re-ingest (theme unknown) must NOT wipe the stored label.
+    db.upsert([mk("fast tool", url="https://x/1")], update_theme=False)
+    assert db.mentions(query="acme")[0].theme == "performance"
+    # Post-cluster write (default) is authoritative and may clear a de-clustered label.
+    db.upsert([mk("fast tool", url="https://x/1")])
+    assert db.mentions(query="acme")[0].theme is None
+    db.close()
+
+
+def test_timeseries_reports_zero_not_null_for_all_null_sentiment_day(tmp_path):
+    db = Store(tmp_path / "t.db")
+    db.upsert([mk("no sentiment", url="https://x/1")])  # sentiment defaults to None
+    row = db.timeseries(query="acme")[0]
+    assert row["positive"] == 0 and row["negative"] == 0
+    assert row["neutral"] == 1 and row["total"] == 1
+    db.close()
+
+
+def test_same_mention_can_belong_to_multiple_queries(tmp_path):
+    db = Store(tmp_path / "t.db")
+    assert db.upsert([mk("shared", query="acme", url="https://x/shared")]) == 1
+    assert db.upsert([mk("shared", query="beta", url="https://x/shared")]) == 1
+    assert len(db.mentions(query="acme")) == 1
+    assert len(db.mentions(query="beta")) == 1
+    db.close()
+
+
 def test_filter_by_sentiment_and_source(tmp_path):
     db = Store(tmp_path / "t.db")
-    db.upsert([
-        mk("a", url="u1", sentiment=Sentiment.POSITIVE, source="hackernews"),
-        mk("b", url="u2", sentiment=Sentiment.NEGATIVE, source="reddit"),
-    ])
+    db.upsert(
+        [
+            mk("a", url="u1", sentiment=Sentiment.POSITIVE, source="hackernews"),
+            mk("b", url="u2", sentiment=Sentiment.NEGATIVE, source="reddit"),
+        ]
+    )
     assert len(db.mentions(sentiment=Sentiment.POSITIVE)) == 1
     assert db.mentions(source="reddit")[0].text == "b"
     db.close()
@@ -50,11 +102,13 @@ def test_filter_by_sentiment_and_source(tmp_path):
 
 def test_summary_aggregates(tmp_path):
     db = Store(tmp_path / "t.db")
-    db.upsert([
-        mk("a", url="u1", sentiment=Sentiment.POSITIVE),
-        mk("b", url="u2", sentiment=Sentiment.POSITIVE),
-        mk("c", url="u3", sentiment=Sentiment.NEGATIVE, source="reddit"),
-    ])
+    db.upsert(
+        [
+            mk("a", url="u1", sentiment=Sentiment.POSITIVE),
+            mk("b", url="u2", sentiment=Sentiment.POSITIVE),
+            mk("c", url="u3", sentiment=Sentiment.NEGATIVE, source="reddit"),
+        ]
+    )
     s = db.summary(query="acme")
     assert s["total"] == 3
     assert s["by_sentiment"]["positive"] == 2
@@ -65,12 +119,14 @@ def test_summary_aggregates(tmp_path):
 
 def test_timeseries_and_net_sentiment(tmp_path):
     db = Store(tmp_path / "t.db")
-    db.upsert([
-        mk("a", url="u1", sentiment=Sentiment.POSITIVE),
-        mk("b", url="u2", sentiment=Sentiment.POSITIVE),
-        mk("c", url="u3", sentiment=Sentiment.NEGATIVE),
-        mk("d", url="u4", sentiment=Sentiment.NEUTRAL),
-    ])
+    db.upsert(
+        [
+            mk("a", url="u1", sentiment=Sentiment.POSITIVE),
+            mk("b", url="u2", sentiment=Sentiment.POSITIVE),
+            mk("c", url="u3", sentiment=Sentiment.NEGATIVE),
+            mk("d", url="u4", sentiment=Sentiment.NEUTRAL),
+        ]
+    )
     ts = db.timeseries(query="acme")
     assert len(ts) == 1
     day = ts[0]
@@ -79,4 +135,287 @@ def test_timeseries_and_net_sentiment(tmp_path):
     assert day["total"] == 4
     # net = (2 - 1) / 4 = 0.25
     assert db.net_sentiment(query="acme") == 0.25
+    db.close()
+
+
+def test_unscored_rows_are_consistently_presented_as_neutral(tmp_path):
+    db = Store(tmp_path / "t.db")
+    db.upsert([mk("not analyzed yet", url="u1")])
+    assert db.summary("acme")["by_sentiment"] == {"neutral": 1}
+    assert db.timeseries("acme")[0]["neutral"] == 1
+    db.close()
+
+
+def test_theme_counts_cover_all_stored_rows(tmp_path):
+    db = Store(tmp_path / "t.db")
+    rows = [mk(str(i), url=f"u{i}") for i in range(205)]
+    for row in rows:
+        row.theme = "reliability"
+    db.upsert(rows)
+    assert db.themes(query="acme") == [{"label": "reliability", "count": 205}]
+    assert len(db.mentions(query="acme", limit=None)) == 205
+    db.close()
+
+
+def test_online_backup_is_consistent_and_refuses_accidental_overwrite(tmp_path):
+    db = Store(tmp_path / "source.db")
+    db.upsert([mk("preserved", url="u1")])
+    target = db.backup(tmp_path / "backup.db")
+    with Store(target) as backup:
+        assert backup.summary("acme")["total"] == 1
+    with pytest.raises(FileExistsError):
+        db.backup(target)
+    db.backup(target, overwrite=True)
+    db.close()
+
+
+def test_retention_removes_old_mentions_and_matching_alert_state(tmp_path):
+    db = Store(tmp_path / "retention.db")
+    old = mk("old", url="old")
+    recent = mk("recent", url="recent")
+    recent.created_at = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    db.upsert([old, recent])
+    db.enqueue_alerts([old, recent], "target")
+    cutoff = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    assert db.count_before(cutoff) == 1
+    assert db.delete_before(cutoff) == 1
+    assert [row.text for row in db.mentions(limit=None)] == ["recent"]
+    assert db.pending_alert_count("acme", "target") == 1
+    db.close()
+
+
+def test_operational_stats_include_alert_state(tmp_path):
+    db = Store(tmp_path / "stats.db")
+    row = mk("negative", url="u1", sentiment=Sentiment.NEGATIVE)
+    db.upsert([row])
+    db.enqueue_alerts([row], "target")
+    assert db.operational_stats() == {
+        "mentions": 1,
+        "queries": 1,
+        "alerts_pending": 1,
+        "alerts_delivered": 0,
+        "threshold_alerts_pending": 0,
+        "threshold_alerts_delivered": 0,
+    }
+    db.mark_alerts_delivered("acme", [row.id], "target")
+    assert db.operational_stats()["alerts_delivered"] == 1
+    db.close()
+
+
+def test_source_metrics_accumulate_durably_by_source(tmp_path):
+    path = tmp_path / "metrics.db"
+    first_at = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    second_at = first_at + timedelta(minutes=5)
+    with Store(path) as db:
+        db.record_source_metric(
+            "hackernews",
+            duration_seconds=0.25,
+            fetched=4,
+            pages=1,
+            retries=0,
+            now=first_at,
+        )
+        db.record_source_metric(
+            "hackernews",
+            duration_seconds=1.5,
+            fetched=0,
+            pages=0,
+            retries=2,
+            error="HTTPStatusError: upstream unavailable",
+            now=second_at,
+        )
+        db.record_source_metric(
+            "bluesky",
+            duration_seconds=0.5,
+            fetched=2,
+            pages=1,
+            retries=0,
+            now=second_at,
+        )
+
+    with Store(path) as reopened:
+        rows = {row["source"]: row for row in reopened.source_metrics()}
+    hackernews = rows["hackernews"]
+    assert hackernews["scans_total"] == 2
+    assert hackernews["errors_total"] == 1
+    assert hackernews["fetched_total"] == 4
+    assert hackernews["pages_total"] == 1
+    assert hackernews["retries_total"] == 2
+    assert hackernews["duration_seconds_total"] == pytest.approx(1.75)
+    assert hackernews["last_duration_seconds"] == pytest.approx(1.5)
+    assert hackernews["last_success"] == 0
+    assert hackernews["last_success_at"] == first_at.isoformat()
+    assert hackernews["last_error_at"] == second_at.isoformat()
+    assert rows["bluesky"]["last_success"] == 1
+
+
+def test_source_metrics_reject_negative_values(tmp_path):
+    with Store(tmp_path / "metrics.db") as db:
+        with pytest.raises(ValueError, match="must not be negative"):
+            db.record_source_metric(
+                "hackernews", duration_seconds=-1, fetched=0, pages=0, retries=0
+            )
+
+
+def test_tracking_persists_empty_keywords_and_selected_sources(tmp_path):
+    db = Store(tmp_path / "tracking.db")
+    db.save_tracking("No Results Yet", ["hackernews", "bluesky", "hackernews"])
+    assert db.queries() == ["No Results Yet"]
+    assert db.tracking("No Results Yet")["sources"] == ["hackernews", "bluesky"]
+    assert db.summary("No Results Yet")["total"] == 0
+    assert db.operational_stats()["queries"] == 1
+    db.close()
+
+
+def test_named_projects_group_keywords_and_report_aggregates(tmp_path):
+    with Store(tmp_path / "projects.db") as db:
+        acme_positive = mk("great", query="acme", url="acme", sentiment=Sentiment.POSITIVE)
+        beta_negative = mk("broken", query="beta", url="beta", sentiment=Sentiment.NEGATIVE)
+        outside = mk("outside", query="other", url="other", sentiment=Sentiment.NEUTRAL)
+        beta_negative.theme = "reliability"
+        db.upsert([acme_positive, beta_negative, outside])
+
+        default = db.project(1)
+        assert default["name"] == "Default"
+        assert set(default["queries"]) == {"acme", "beta", "other"}
+
+        project = db.create_project("  Product Suite  ")
+        assert project["name"] == "Product Suite"
+        assert db.add_query_to_project(project["id"], "acme")
+        assert db.add_query_to_project(project["id"], "beta")
+        assert not db.add_query_to_project(project["id"], "beta")
+
+        refreshed = db.project(project["id"])
+        assert set(refreshed["queries"]) == {"acme", "beta"}
+        assert refreshed["query_count"] == 2
+        assert refreshed["mention_count"] == 2
+        assert db.summary(project_id=project["id"])["total"] == 2
+        assert db.net_sentiment(project_id=project["id"]) == 0.0
+        assert len(db.timeseries(project_id=project["id"])) == 1
+        assert db.themes(project_id=project["id"])[0] == {
+            "label": "reliability",
+            "count": 1,
+        }
+        assert {row.query for row in db.mentions(project_id=project["id"])} == {
+            "acme",
+            "beta",
+        }
+
+        assert db.remove_query_from_project(project["id"], "beta")
+        assert db.summary(project_id=project["id"])["total"] == 1
+        assert db.summary("beta")["total"] == 1
+        assert db.delete_project(project["id"])
+        assert db.project(project["id"]) is None
+        assert db.summary("acme")["total"] == 1
+
+
+def test_project_names_are_unique_and_default_is_protected(tmp_path):
+    with Store(tmp_path / "projects.db") as db:
+        db.create_project("Platform")
+        with pytest.raises(ValueError, match="already exists"):
+            db.create_project("platform")
+        with pytest.raises(ValueError, match="Default"):
+            db.delete_project(1)
+        with pytest.raises(ValueError, match="Default"):
+            db.remove_query_from_project(1, "acme")
+        with pytest.raises(ValueError, match="unknown project"):
+            db.save_tracking("acme", ["hackernews"], project_id=999)
+
+
+def test_project_scoped_tracking_does_not_implicitly_join_default(tmp_path):
+    with Store(tmp_path / "projects.db") as db:
+        project = db.create_project("Focused")
+        db.save_tracking("new-keyword", ["hackernews"], project_id=project["id"])
+        db.save_tracking("new-keyword", ["bluesky"])
+        assert db.queries(project_id=project["id"]) == ["new-keyword"]
+        assert "new-keyword" not in db.queries(project_id=1)
+
+
+def test_source_state_keeps_forward_and_backfill_cursors_separate(tmp_path):
+    db = Store(tmp_path / "cursors.db")
+    first = mk("recent", url="recent")
+    db.save_tracking("acme", ["hackernews"])
+    db.upsert([first])
+    db.record_source_success(
+        "acme", "hackernews", [first], mode="incremental", next_cursor="older-1"
+    )
+    state = db.source_state("acme", "hackernews")
+    assert state["backfill_cursor"] == "older-1"
+    assert state["incremental_cursor"] is None
+    assert not state["backfill_complete"]
+
+    newer = mk("newer", url="newer")
+    newer.created_at += timedelta(days=1)
+    db.upsert([newer])
+    db.record_source_success(
+        "acme",
+        "hackernews",
+        [newer],
+        mode="incremental",
+        next_cursor="forward-2",
+        incremental_since=first.created_at,
+    )
+    state = db.source_state("acme", "hackernews")
+    assert state["incremental_cursor"] == "forward-2"
+    assert state["incremental_since"] == first.created_at.isoformat()
+    assert state["backfill_cursor"] == "older-1"
+
+    db.record_source_success(
+        "acme",
+        "hackernews",
+        [],
+        mode="incremental",
+        next_cursor=None,
+        incremental_since=first.created_at,
+    )
+    db.record_source_success("acme", "hackernews", [], mode="backfill", next_cursor=None)
+    state = db.source_state("acme", "hackernews")
+    assert state["incremental_cursor"] is None
+    assert state["incremental_since"] is None
+    assert state["backfill_cursor"] is None
+    assert state["backfill_complete"]
+    db.close()
+
+
+def test_opens_and_migrates_v01_database(tmp_path):
+    path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        """
+        CREATE TABLE mentions (
+            id TEXT PRIMARY KEY, source TEXT NOT NULL, query TEXT NOT NULL,
+            author TEXT, title TEXT, text TEXT, url TEXT, created_at TEXT NOT NULL,
+            score INTEGER, sentiment TEXT, sentiment_score REAL, theme TEXT,
+            fetched_at TEXT NOT NULL
+        );
+        INSERT INTO mentions VALUES (
+            'legacy', 'hackernews', 'acme', NULL, NULL, 'hello', 'https://x/1',
+            '2026-06-01T00:00:00+00:00', NULL, 'neutral', 0.0, NULL,
+            '2026-06-01T00:00:00+00:00'
+        );
+        """
+    )
+    conn.close()
+
+    db = Store(path)
+    assert db.summary("acme")["total"] == 1
+    primary_key = [
+        row["name"]
+        for row in sorted(
+            db._conn.execute("PRAGMA table_info(mentions)"), key=lambda row: row["pk"]
+        )
+        if row["pk"]
+    ]
+    assert primary_key == ["id", "query"]
+    assert db._conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alert_outbox'"
+    ).fetchone()
+    assert db._conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tracked_queries'"
+    ).fetchone()
+    assert db._conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threshold_alerts'"
+    ).fetchone()
+    assert db.tracking("acme")["sources"] == []
+    assert db.project(1)["queries"] == ["acme"]
     db.close()

@@ -20,10 +20,13 @@ DEFAULT_BASE_URL = "https://api.openai.com/v1"
 class OpenAIProvider(LLMProvider):
     name = "openai"
 
-    def __init__(self, model: str | None = None, api_key: str | None = None,
-                 base_url: str | None = None, **_):
+    def __init__(
+        self, model: str | None = None, api_key: str | None = None, base_url: str | None = None, **_
+    ):
         self.model = model or os.getenv("HARKEN_LLM_MODEL") or DEFAULT_MODEL
-        self.base_url = (base_url or os.getenv("HARKEN_LLM_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self.base_url = (base_url or os.getenv("HARKEN_LLM_BASE_URL") or DEFAULT_BASE_URL).rstrip(
+            "/"
+        )
         self._api_key = api_key or os.getenv("HARKEN_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 
     @property

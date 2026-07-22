@@ -9,9 +9,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from harken.models import Mention
-from harken.sources.base import Source
+from harken.sources.base import FetchPage, Source
 
-_API = "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
+# The legacy public.api host is blocked by Bluesky's CDN in some regions. The
+# official AppView host exposes the same public XRPC endpoint without a session.
+_API = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts"
 
 
 class BlueskySource(Source):
@@ -20,7 +22,21 @@ class BlueskySource(Source):
     needs_config = False
 
     def fetch(self, query: str, limit: int = 50) -> list[Mention]:
+        return self.fetch_page(query, limit=limit).mentions
+
+    def fetch_page(
+        self,
+        query: str,
+        limit: int = 50,
+        *,
+        cursor: str | None = None,
+        since: datetime | None = None,
+    ) -> FetchPage:
         params = {"q": query, "limit": min(limit, 100), "sort": "latest"}
+        if cursor:
+            params["cursor"] = cursor
+        if since:
+            params["since"] = since.isoformat().replace("+00:00", "Z")
         with self._client() as client:
             resp = client.get(_API, params=params)
             resp.raise_for_status()
@@ -33,7 +49,7 @@ class BlueskySource(Source):
             handle = author.get("handle")
             uri = post.get("uri", "")
             rkey = uri.split("/")[-1] if uri else ""
-            created = _parse(record.get("createdAt"))
+            created = _parse(post.get("indexedAt") or record.get("createdAt"))
             mentions.append(
                 Mention(
                     source=self.name,
@@ -48,7 +64,7 @@ class BlueskySource(Source):
                     score=post.get("likeCount"),
                 )
             )
-        return mentions
+        return FetchPage(mentions, data.get("cursor"))
 
 
 def _parse(s: str | None) -> datetime:

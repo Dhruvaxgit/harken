@@ -11,7 +11,7 @@ import hashlib
 from datetime import datetime, timezone
 from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class Sentiment(str, Enum):
@@ -43,6 +43,21 @@ class Mention(BaseModel):
     sentiment: Sentiment | None = None
     sentiment_score: float | None = None  # signed, roughly [-1, 1]
     theme: str | None = None
+
+    @field_validator("created_at")
+    @classmethod
+    def _ensure_tz_aware(cls, value: datetime) -> datetime:
+        """Treat a tz-naive source timestamp as UTC.
+
+        Some source APIs (or non-conformant federated servers) return
+        offset-less timestamps. Left naive, they later blow up when compared
+        against an aware ``datetime`` (alert bucketing) or get silently shifted
+        by the host's local offset when normalised for cursor bounds. Anchoring
+        them to UTC here keeps every ``created_at`` aware and comparable.
+        """
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
     def model_post_init(self, __context) -> None:  # noqa: D401
         if not self.id:

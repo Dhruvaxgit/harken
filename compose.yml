@@ -1,0 +1,14 @@
+services:
+  harken:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:8042:8042"
+    volumes:
+      - harken-data:/data
+    restart: unless-stopped
+
+volumes:
+  harken-data:
