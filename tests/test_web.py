@@ -610,7 +610,9 @@ def test_oversized_project_id_on_mutations_is_rejected_not_500(tmp_path):
     token = re.search(r'data-csrf="([^"]+)"', client.get("/").text).group(1)
     huge = "9" * 26
     assert (
-        client.request("DELETE", f"/api/projects/{huge}", headers={"X-Harken-CSRF": token}).status_code
+        client.request(
+            "DELETE", f"/api/projects/{huge}", headers={"X-Harken-CSRF": token}
+        ).status_code
         == 422
     )
     assert (
@@ -656,9 +658,7 @@ def test_chart_series_tolerates_null_sentiment_days(tmp_path):
 def test_login_rejects_cross_origin_post(tmp_path):
     db_path = str(tmp_path / "xorigin.db")
     with Store(db_path) as store:
-        store.create_user(
-            "admin", hash_password("admin password 123", iterations=100_000), "admin"
-        )
+        store.create_user("admin", hash_password("admin password 123", iterations=100_000), "admin")
     cfg = Config(db_path=db_path, auth_mode="accounts")
     client = TestClient(create_app(db_path, config=cfg), follow_redirects=False)
     csrf = re.search(r'name="csrf" value="([^"]+)"', client.get("/login").text).group(1)

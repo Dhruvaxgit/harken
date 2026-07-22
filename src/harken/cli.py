@@ -221,9 +221,7 @@ def watch(
             except KeyboardInterrupt:
                 raise
             except Exception as e:  # a single scan failing must not kill the watcher
-                console.print(
-                    f"  [red]✗[/red] scan {completed} failed: {type(e).__name__}: {e}"
-                )
+                console.print(f"  [red]✗[/red] scan {completed} failed: {type(e).__name__}: {e}")
             else:
                 for src, err in result.errors.items():
                     console.print(f"  [yellow]![/yellow] {src}: {err}")
