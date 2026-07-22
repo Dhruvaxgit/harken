@@ -81,3 +81,38 @@ def test_price_hike_with_no_notice_reads_negative():
     a = make()
     r = a.score("Acme just raised prices 40% with no notice.")
     assert r.label is Sentiment.NEGATIVE
+
+
+def test_less_negative_language_reads_positive():
+    r = make().score("The UI is cleaner and way less bloated.")
+    assert r.label is Sentiment.POSITIVE
+
+
+def test_common_product_complaints_read_negative():
+    samples = [
+        "The price went up again and is too much for me.",
+        "It keeps crashing and performance is rough.",
+        "The lack of reliable sync is a non-starter.",
+        "I don't trust it; that is a dealbreaker.",
+    ]
+    assert all(make().score(text).label is Sentiment.NEGATIVE for text in samples)
+
+
+def test_no_complaints_reads_positive():
+    assert make().score("No complaints from our team.").label is Sentiment.POSITIVE
+
+
+def test_fixed_bug_reads_positive():
+    assert (
+        make().score("The bug was fixed and now everything works perfectly.").label
+        is Sentiment.POSITIVE
+    )
+
+
+def test_explicitly_split_opinions_read_neutral():
+    assert make().score("Some users like it and others hate it.").label is Sentiment.NEUTRAL
+
+
+def test_stock_mild_phrases_stay_neutral():
+    assert make().score("It works as described.").label is Sentiment.NEUTRAL
+    assert make().score("It is fine, nothing special.").label is Sentiment.NEUTRAL

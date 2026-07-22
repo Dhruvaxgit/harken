@@ -6,14 +6,14 @@ Filters feed entries to those mentioning the query. Configure feeds via
 
 from __future__ import annotations
 
+from calendar import timegm
 from datetime import datetime, timezone
-from time import mktime
 
 import feedparser
 import httpx
 
 from harken.models import Mention
-from harken.sources.base import Source
+from harken.sources.base import Source, strip_html
 
 
 class RSSSource(Source):
@@ -26,7 +26,9 @@ class RSSSource(Source):
         self.feeds = feeds or []
 
     def fetch(self, query: str, limit: int = 50) -> list[Mention]:
-        q = query.lower()
+        if not self.feeds:
+            raise RuntimeError("RSS requires at least one URL in HARKEN_RSS_FEEDS")
+        q = query.casefold()
         mentions: list[Mention] = []
         with self._client() as client:
             for feed_url in self.feeds:
@@ -39,7 +41,7 @@ class RSSSource(Source):
                 for entry in parsed.entries:
                     title = entry.get("title", "")
                     summary = entry.get("summary", "")
-                    blob = f"{title} {summary}".lower()
+                    blob = f"{title} {summary}".casefold()
                     if q not in blob:
                         continue
                     created = _entry_time(entry)
@@ -49,7 +51,7 @@ class RSSSource(Source):
                             query=query,
                             author=entry.get("author"),
                             title=title or None,
-                            text=_strip_html(summary),
+                            text=strip_html(summary),
                             url=entry.get("link"),
                             created_at=created,
                         )
@@ -61,11 +63,7 @@ def _entry_time(entry) -> datetime:
     for key in ("published_parsed", "updated_parsed"):
         t = entry.get(key)
         if t:
-            return datetime.fromtimestamp(mktime(t), tz=timezone.utc)
+            # feedparser's struct_time is UTC; time.mktime() interprets it as
+            # local time and shifts timestamps on non-UTC hosts.
+            return datetime.fromtimestamp(timegm(t), tz=timezone.utc)
     return datetime.now(timezone.utc)
-
-
-def _strip_html(s: str) -> str:
-    import re
-
-    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", s or "")).strip()

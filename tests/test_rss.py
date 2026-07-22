@@ -1,9 +1,13 @@
 """RSS source tests — HTTP is mocked, so these run offline and deterministically."""
 
+from datetime import datetime, timezone
+from time import struct_time
+
 import httpx
+import pytest
 import respx
 
-from harken.sources.rss import RSSSource
+from harken.sources.rss import RSSSource, _entry_time
 
 _FEED_A = """<?xml version="1.0"?>
 <rss version="2.0"><channel>
@@ -67,3 +71,13 @@ def test_uses_the_shared_timeout_client():
         assert client.timeout == httpx.Timeout(15.0)
     finally:
         client.close()
+
+
+def test_requires_at_least_one_feed():
+    with pytest.raises(RuntimeError, match="HARKEN_RSS_FEEDS"):
+        RSSSource().fetch("acme")
+
+
+def test_feed_struct_time_is_interpreted_as_utc():
+    entry = {"published_parsed": struct_time((2024, 1, 1, 0, 0, 0, 0, 1, 0))}
+    assert _entry_time(entry) == datetime(2024, 1, 1, tzinfo=timezone.utc)

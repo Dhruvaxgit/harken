@@ -1,8 +1,8 @@
 """Pluggable mention sources.
 
 Each source implements :class:`~harken.sources.base.Source`. New sources are
-registered in :data:`REGISTRY`. All sources shipped in v1 work with no paid
-credentials; ``hackernews`` needs no key at all.
+registered in :data:`REGISTRY`. Hacker News and Bluesky need no credentials;
+keyed sources are enabled with operator-supplied configuration.
 """
 
 from __future__ import annotations
@@ -13,6 +13,9 @@ from harken.sources.hackernews import HackerNewsSource
 from harken.sources.mastodon import MastodonSource
 from harken.sources.reddit import RedditSource
 from harken.sources.rss import RSSSource
+from harken.sources.stackoverflow import StackOverflowSource
+from harken.sources.x import XSource
+from harken.sources.youtube import YouTubeSource
 
 REGISTRY: dict[str, type[Source]] = {
     HackerNewsSource.name: HackerNewsSource,
@@ -20,9 +23,12 @@ REGISTRY: dict[str, type[Source]] = {
     MastodonSource.name: MastodonSource,
     BlueskySource.name: BlueskySource,
     RSSSource.name: RSSSource,
+    StackOverflowSource.name: StackOverflowSource,
+    XSource.name: XSource,
+    YouTubeSource.name: YouTubeSource,
 }
 
-# Sources that work with zero configuration (no key, no account).
-DEFAULT_SOURCES = ["hackernews", "reddit"]
+# Sources verified to work with zero configuration (no key, no account).
+DEFAULT_SOURCES = ["hackernews", "bluesky"]
 
 __all__ = ["Source", "REGISTRY", "DEFAULT_SOURCES"]

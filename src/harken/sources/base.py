@@ -2,11 +2,24 @@
 
 from __future__ import annotations
 
+import html
+import re
+from dataclasses import dataclass
+from datetime import datetime
+
 import httpx
 
 from harken.models import Mention
 
 USER_AGENT = "harken/0.1 (+https://github.com/VladUZH/harken)"
+
+
+@dataclass
+class FetchPage:
+    """One source page plus an opaque cursor for the next, older page."""
+
+    mentions: list[Mention]
+    next_cursor: str | None = None
 
 
 class Source:
@@ -30,7 +43,28 @@ class Source:
     def fetch(self, query: str, limit: int = 50) -> list[Mention]:
         raise NotImplementedError
 
+    def fetch_page(
+        self,
+        query: str,
+        limit: int = 50,
+        *,
+        cursor: str | None = None,
+        since: datetime | None = None,
+    ) -> FetchPage:
+        """Fetch one page.
+
+        The default keeps older source plugins working. Cursor-aware adapters
+        override this method; ``since`` is a best-effort incremental boundary.
+        """
+        return FetchPage(self.fetch(query, limit=limit))
+
     # -- helpers -------------------------------------------------------------
     def _client(self, **kwargs) -> httpx.Client:
         headers = {"User-Agent": USER_AGENT, **kwargs.pop("headers", {})}
         return httpx.Client(headers=headers, timeout=15.0, **kwargs)
+
+
+def strip_html(value: str) -> str:
+    """Turn the small HTML fragments returned by feeds into readable text."""
+    without_tags = re.sub(r"<[^>]+>", " ", value or "")
+    return re.sub(r"\s+", " ", html.unescape(without_tags)).strip()

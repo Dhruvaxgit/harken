@@ -73,4 +73,31 @@ def test_theme_labels_are_deterministic_regardless_of_hash_seed():
         m("sync and price are both annoying"),
     ]
     themes = ThemeExtractor().extract(mentions)
-    assert themes[0].label == "both / price"
+    assert themes[0].label == "pricing / sync"
+
+
+def test_reanalysis_clears_stale_theme_labels():
+    mentions = [m("pricing")]
+    mentions[0].theme = "old label"
+    assert ThemeExtractor().extract(mentions) == []
+    assert mentions[0].theme is None
+
+
+def test_default_only_reports_recurring_topics():
+    assert ThemeExtractor().extract([m("one-off topic")]) == []
+
+
+def test_normalizes_obvious_topic_variants_and_drops_incidental_label_words():
+    mentions = [
+        m("Fast interface this year"),
+        m("The speed is excellent today"),
+        m("Performance is rough on large files"),
+    ]
+    themes = ThemeExtractor().extract(mentions)
+    assert themes[0].label == "performance"
+    assert themes[0].count == 3
+
+    source_theme = ThemeExtractor().extract(
+        [m("I wish it were open source"), m("Closed source is a dealbreaker")]
+    )
+    assert source_theme[0].label == "open-source"

@@ -21,41 +21,162 @@ from harken.models import Sentiment
 # sentiment vocabulary. Contributions welcome.
 _LEXICON: dict[str, float] = {
     # strong positive
-    "amazing": 3, "awesome": 3, "excellent": 3, "fantastic": 3, "incredible": 3,
-    "love": 3, "loved": 3, "perfect": 3, "brilliant": 3, "outstanding": 3,
-    "wonderful": 3, "superb": 3, "delightful": 3, "phenomenal": 3, "gem": 3,
+    "amazing": 3,
+    "awesome": 3,
+    "excellent": 3,
+    "fantastic": 3,
+    "incredible": 3,
+    "love": 3,
+    "loved": 3,
+    "perfect": 3,
+    "perfectly": 3,
+    "brilliant": 3,
+    "outstanding": 3,
+    "wonderful": 3,
+    "superb": 3,
+    "delightful": 3,
+    "phenomenal": 3,
+    "gem": 3,
     # positive
-    "good": 2, "great": 2, "nice": 2, "helpful": 2, "useful": 2, "solid": 2,
-    "clean": 2, "fast": 2, "smooth": 2, "happy": 2, "glad": 2, "impressed": 2,
-    "impressive": 2, "reliable": 2, "intuitive": 2, "elegant": 2, "polished": 2,
-    "recommend": 2, "recommended": 2, "works": 1.5, "working": 1.5, "thanks": 2,
-    "thank": 2, "appreciate": 2, "win": 2, "winning": 2, "best": 2.5, "like": 1.5,
-    "liked": 1.5, "enjoy": 2, "enjoyed": 2, "cool": 1.5, "neat": 1.5, "yay": 2,
-    "kudos": 2, "promising": 1.5, "slick": 2, "lightweight": 1.5, "free": 1,
+    "good": 2,
+    "great": 2,
+    "nice": 2,
+    "helpful": 2,
+    "useful": 2,
+    "solid": 2,
+    "clean": 2,
+    "cleaner": 2,
+    "beautiful": 2,
+    "gorgeous": 2,
+    "fast": 2,
+    "instant": 2,
+    "instantly": 2,
+    "smooth": 2,
+    "happy": 2,
+    "glad": 2,
+    "impressed": 2,
+    "impressive": 2,
+    "reliable": 2,
+    "intuitive": 2,
+    "elegant": 2,
+    "polished": 2,
+    "recommend": 2,
+    "recommended": 2,
+    "works": 1.5,
+    "working": 1.5,
+    "worth": 1.5,
+    "trust": 1.5,
+    "thanks": 2,
+    "thank": 2,
+    "appreciate": 2,
+    "win": 2,
+    "winning": 2,
+    "best": 2.5,
+    "like": 1.5,
+    "liked": 1.5,
+    "enjoy": 2,
+    "enjoyed": 2,
+    "cool": 1.5,
+    "neat": 1.5,
+    "yay": 2,
+    "kudos": 2,
+    "promising": 1.5,
+    "slick": 2,
+    "lightweight": 1.5,
+    "free": 1,
     # mild positive
-    "ok": 0.5, "okay": 0.5, "fine": 0.5, "decent": 1, "better": 1, "improved": 1.5,
+    "ok": 0.5,
+    "okay": 0.5,
+    "fine": 0.5,
+    "decent": 1,
+    "better": 1,
+    "improved": 1.5,
+    "fixed": 2,
     # negative
-    "bad": -2, "poor": -2, "slow": -2, "buggy": -2.5, "bug": -1.5, "broken": -2.5,
-    "broke": -2, "crash": -2.5, "crashes": -2.5, "crashed": -2.5, "fail": -2,
-    "failed": -2, "failing": -2, "error": -1.5, "errors": -1.5, "issue": -1,
-    "issues": -1, "problem": -1.5, "problems": -1.5, "annoying": -2, "frustrating": -2.5,
-    "frustrated": -2.5, "confusing": -2, "confused": -1.5, "disappointing": -2.5,
-    "disappointed": -2.5, "useless": -3, "worthless": -3, "garbage": -3, "trash": -3,
-    "horrible": -3, "terrible": -3, "awful": -3, "hate": -3, "hated": -3,
-    "worst": -3, "sucks": -2.5, "suck": -2.5, "painful": -2, "clunky": -2,
-    "bloated": -2, "expensive": -1.5, "overpriced": -2, "scam": -3, "spam": -2,
-    "lacking": -1.5, "missing": -1, "unreliable": -2.5, "insecure": -2,
-    "vulnerable": -1.5, "regret": -2.5, "meh": -1, "disaster": -3, "nightmare": -3,
-    "concerned": -1.5, "concern": -1.5, "worried": -1.5, "ugly": -2, "worse": -2,
+    "bad": -2,
+    "poor": -2,
+    "slow": -2,
+    "buggy": -2.5,
+    "bug": -1.5,
+    "broken": -2.5,
+    "broke": -2,
+    "crash": -2.5,
+    "crashes": -2.5,
+    "crashed": -2.5,
+    "crashing": -2.5,
+    "corrupt": -3,
+    "corrupted": -3,
+    "fail": -2,
+    "failed": -2,
+    "failing": -2,
+    "error": -1.5,
+    "errors": -1.5,
+    "issue": -1,
+    "issues": -1,
+    "problem": -1.5,
+    "problems": -1.5,
+    "complaint": -1.5,
+    "complaints": -1.5,
+    "annoying": -2,
+    "frustrating": -2.5,
+    "frustrated": -2.5,
+    "confusing": -2,
+    "confused": -1.5,
+    "disappointing": -2.5,
+    "disappointed": -2.5,
+    "useless": -3,
+    "worthless": -3,
+    "garbage": -3,
+    "trash": -3,
+    "horrible": -3,
+    "terrible": -3,
+    "awful": -3,
+    "hate": -3,
+    "hated": -3,
+    "worst": -3,
+    "sucks": -2.5,
+    "suck": -2.5,
+    "painful": -2,
+    "clunky": -2,
+    "bloated": -2,
+    "expensive": -1.5,
+    "overpriced": -2,
+    "scam": -3,
+    "spam": -2,
+    "lacking": -1.5,
+    "missing": -1,
+    "unreliable": -2.5,
+    "insecure": -2,
+    "vulnerable": -1.5,
+    "regret": -2.5,
+    "meh": -1,
+    "disaster": -3,
+    "nightmare": -3,
+    "concerned": -1.5,
+    "concern": -1.5,
+    "worried": -1.5,
+    "ugly": -2,
+    "worse": -2,
+    "rough": -1.5,
+    "steep": -2.5,
+    "ridiculous": -2.5,
+    "dealbreaker": -2.5,
     # churn / brand-monitoring signals: unresponsive support, outages, price hikes
-    "outage": -2, "outages": -2, "downtime": -2, "unresponsive": -2.5,
-    "ghosted": -2.5, "churn": -1.5, "churned": -2, "overhyped": -2,
-    "hike": -1.5, "hiked": -1.5,
+    "outage": -2,
+    "outages": -2,
+    "downtime": -2,
+    "unresponsive": -2.5,
+    "ghosted": -2.5,
+    "churn": -1.5,
+    "churned": -2,
+    "overhyped": -2,
+    "hike": -1.5,
+    "hiked": -1.5,
 }
 
 # Fixed idioms whose sentiment doesn't decompose into single tokens (checked as
 # lowercase substrings against the raw text). Kept short and unambiguous.
-_NEGATIVE_PHRASES: dict[str, float] = {
+_PHRASE_VALENCE: dict[str, float] = {
     "no notice": -2.0,
     "never replied": -2.0,
     "never responded": -2.0,
@@ -63,16 +184,26 @@ _NEGATIVE_PHRASES: dict[str, float] = {
     "switched off": -1.5,
     "went silent": -2.0,
     "radio silence": -2.0,
+    "lack of": -1.5,
+    "non-starter": -2.5,
+    "pricing went up": -2.0,
+    "price went up": -2.0,
+    "too much for me": -2.0,
+    # Stock phrases that are conventionally neutral despite positive tokens.
+    "works as described": -1.5,
+    "nothing special": -0.5,
 }
 
 # Typographic quote variants that should read as the plain ASCII apostrophe —
 # otherwise "don't" (curly ’) fails to tokenize as a single word, "don" isn't a
 # recognised negator, and the negation is silently dropped.
-_QUOTE_NORMALIZE = str.maketrans({
-    "’": "'",  # RIGHT SINGLE QUOTATION MARK (’)
-    "‘": "'",  # LEFT SINGLE QUOTATION MARK (‘)
-    "ʼ": "'",  # MODIFIER LETTER APOSTROPHE (ʼ)
-})
+_QUOTE_NORMALIZE = str.maketrans(
+    {
+        "’": "'",  # RIGHT SINGLE QUOTATION MARK (’)
+        "‘": "'",  # LEFT SINGLE QUOTATION MARK (‘)
+        "ʼ": "'",  # MODIFIER LETTER APOSTROPHE (ʼ)
+    }
+)
 
 # Contrastive-conjunction weighting: sentiment before "but" matters less than
 # what follows it ("fine but overhyped" should read negative, not positive).
@@ -80,18 +211,52 @@ _CONTRAST_PRE = 0.5
 _CONTRAST_POST = 1.5
 
 _INTENSIFIERS: dict[str, float] = {
-    "very": 1.4, "really": 1.4, "absolutely": 1.6, "extremely": 1.7, "so": 1.3,
-    "super": 1.5, "incredibly": 1.6, "totally": 1.4, "completely": 1.4,
-    "highly": 1.4, "insanely": 1.6, "ridiculously": 1.5, "remarkably": 1.4,
+    "very": 1.4,
+    "really": 1.4,
+    "absolutely": 1.6,
+    "extremely": 1.7,
+    "so": 1.3,
+    "super": 1.5,
+    "incredibly": 1.6,
+    "totally": 1.4,
+    "completely": 1.4,
+    "highly": 1.4,
+    "insanely": 1.6,
+    "ridiculously": 1.5,
+    "remarkably": 1.4,
 }
 _DAMPENERS: dict[str, float] = {
-    "slightly": 0.6, "somewhat": 0.7, "kinda": 0.7, "barely": 0.5, "a": 1.0,
-    "bit": 0.7, "little": 0.7,
+    "slightly": 0.6,
+    "somewhat": 0.7,
+    "kinda": 0.7,
+    "barely": 0.5,
+    "a": 1.0,
+    "bit": 0.7,
+    "little": 0.7,
 }
 _NEGATORS = {
-    "not", "no", "never", "n't", "cannot", "cant", "can't", "without",
-    "hardly", "neither", "nor", "isnt", "isn't", "wasnt", "wasn't", "dont",
-    "don't", "doesnt", "doesn't", "didnt", "didn't",
+    "not",
+    "no",
+    "never",
+    "n't",
+    "cannot",
+    "cant",
+    "can't",
+    "without",
+    "hardly",
+    "neither",
+    "nor",
+    "isnt",
+    "isn't",
+    "wasnt",
+    "wasn't",
+    "dont",
+    "don't",
+    "doesnt",
+    "doesn't",
+    "didnt",
+    "didn't",
+    "less",
 }
 
 _POSITIVE_EMOJI = "🎉🚀😀😃😄😁😊🙂👍❤️💜✨🔥💯🥳😍🤩👏"
@@ -123,15 +288,19 @@ class LexiconSentiment:
         but_idx = tokens.index("but") if "but" in tokens else None
         total = 0.0
         hits = 0
+        positive_hits = 0
+        negative_hits = 0
         for i, tok in enumerate(tokens):
             val = _LEXICON.get(tok)
             if val is None:
                 continue
             hits += 1
+            positive_hits += val > 0
+            negative_hits += val < 0
             # look back up to 3 tokens for negators / intensifiers
             mult = 1.0
             negated = False
-            for prev in tokens[max(0, i - 3):i]:
+            for prev in tokens[max(0, i - 3) : i]:
                 if prev in _NEGATORS:
                     negated = True
                 if prev in _INTENSIFIERS:
@@ -147,10 +316,15 @@ class LexiconSentiment:
 
         # fixed idioms that don't decompose into single lexicon tokens
         lowered = text.lower()
-        for phrase, val in _NEGATIVE_PHRASES.items():
+        for phrase, val in _PHRASE_VALENCE.items():
             if phrase in lowered:
                 total += val
                 hits += 1
+
+        # Explicitly distributed opinions describe a mixed population rather
+        # than one author's strong stance ("some users like it, others hate it").
+        if {"some", "others"}.issubset(tokens) and positive_hits and negative_hits:
+            total *= 0.2
 
         # emoji contribute directly
         for ch in text:

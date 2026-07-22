@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0a0b0e">
+  <title>Sign in · Harken</title>
+  <link rel="preload" href="/static/fonts/fraunces.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/hanken.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
+</head>
+<body class="login-page">
+<div class="grain" aria-hidden="true"></div>
+<main class="login-shell">
+  <section class="login-card panel">
+    <div class="login-brand">
+      <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+        <g fill="none" stroke="currentColor" stroke-linecap="round">
+          <circle cx="20" cy="29" r="2.6" fill="currentColor" stroke="none"/>
+          <path d="M13 25 a9 9 0 0114 0" stroke-width="2.6" opacity=".85"/>
+          <path d="M8 21 a17 17 0 0124 0" stroke-width="2.4" opacity=".55"/>
+          <path d="M3.5 17 a25 25 0 0133 0" stroke-width="2.2" opacity=".3"/>
+        </g>
+      </svg>
+      <div><span class="eyebrow">local account</span><h1>Sign in to Harken</h1></div>
+    </div>
+    {% if no_users %}
+    <div class="login-notice">No account exists yet. Create the first admin with <code>harken user create</code> on the server.</div>
+    {% endif %}
+    {% if error %}<div class="login-error" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="/login" class="login-form">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label><span>username</span><input name="username" autocomplete="username" maxlength="64" required autofocus></label>
+      <label><span>password</span><input name="password" type="password" autocomplete="current-password" maxlength="1024" required></label>
+      <button class="scan-button primary" type="submit">sign in</button>
+    </form>
+    <p class="login-foot">Sessions are stored in your Harken database. No identity data leaves your server.</p>
+  </section>
+</main>
+</body>
+</html>
