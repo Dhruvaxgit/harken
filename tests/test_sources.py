@@ -300,7 +300,11 @@ def test_x_parses_posts_authors_metrics_and_pagination():
     assert request.headers["authorization"] == "Bearer secret-token"
     assert params["max_results"] == "10"
     assert params["next_token"] == "current"
-    assert params["start_time"] == since.isoformat().replace("+00:00", "Z")
+    # start_time is nudged 1s past `since` so the already-seen boundary tweet
+    # isn't re-fetched (and, on the X API, re-billed) every poll cycle.
+    assert params["start_time"] == (since + timedelta(seconds=1)).isoformat().replace(
+        "+00:00", "Z"
+    )
     assert page.next_cursor == "older-posts"
     assert len(page.mentions) == 1
     assert page.mentions[0].author == "alice"
