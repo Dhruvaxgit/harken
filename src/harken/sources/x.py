@@ -101,11 +101,21 @@ def _rfc3339(value: datetime) -> str:
 
 
 def _recent_start(value: datetime | None, *, now: datetime | None = None) -> str | None:
-    """Return a provider-valid recent-search boundary, otherwise use its default window."""
+    """Return a provider-valid recent-search boundary, otherwise use its default window.
+
+    ``value`` is normally the newest tweet timestamp already stored from the
+    prior scan. X's ``start_time`` is inclusive, so passing that timestamp
+    back verbatim causes the same tweet to be re-fetched (and re-billed,
+    under X's pay-per-post-read pricing) on every subsequent poll until a
+    genuinely newer tweet supersedes it. Nudging the boundary forward by one
+    second — X's timestamp granularity — excludes the already-seen tweet
+    without risking a gap, at the negligible cost of a same-second tweet from
+    a different author being missed on the rare keyword where that occurs.
+    """
     if value is None:
         return None
     current = now or datetime.now(timezone.utc)
     boundary = value.astimezone(timezone.utc)
     if current - timedelta(days=7) < boundary < current - timedelta(seconds=30):
-        return _rfc3339(boundary)
+        return _rfc3339(boundary + timedelta(seconds=1))
     return None
